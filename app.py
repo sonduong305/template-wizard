@@ -17,6 +17,14 @@ load_dotenv()
 MODEL_NAME = "gpt-3.5-turbo"
 
 
+def is_valid_url(url):
+    try:
+        result = urlparse(url)
+        return all([result.scheme, result.netloc])
+    except ValueError:
+        return False
+
+
 def select_meaningful_css_files(files):
     prompt = "Above are css files of a website, return what should be the main style sheet, not any lib ones. Return in the list of css file urls in list format without any additional information"
 
@@ -27,13 +35,20 @@ def select_meaningful_css_files(files):
         ],
         model=MODEL_NAME,
     )
-    return ast.literal_eval(response["choices"][0]["message"]["content"])
+    if not response["choices"][0]["message"]["content"].startswith("["):
+        return []
+    css_files = ast.literal_eval(response["choices"][0]["message"]["content"])
+    valid_files = []
+    for file in css_files:
+        if is_valid_url(file):
+            valid_files.append(file)
+    return valid_files
 
 
 def extract_meaningful_css_blocks(all_blocks):
     meaningful_block = []
     for blocks in all_blocks:
-        prompt = "What is the primary color, secondary color, background color in the whole website, given a part of the css blocks, answer in the form of json with keys: primary_color, secondary_color, background_color, text_color, link_color with values being a hex code. If you find it's not in the given blocks, only return the found ones"
+        prompt = "What is the primary color, secondary color, background color in the whole website, given a part of the css blocks, answer in the form of json with keys: primary_color, secondary_color, background_color, text_color, link_color, primary_font, secondary_font with values being a hex code. If you find it's not in the given blocks, only return the found ones"
 
         response = completion(
             messages=[
@@ -93,6 +108,9 @@ def filter_color_related_properties(css_string):
         "text-decoration",
         "text-decoration-color",
         "text-shadow",
+        "font",
+        "font-family",
+        "font-weight",
     ]
 
     filtered_blocks = []
@@ -217,7 +235,7 @@ def fetch_colors_from_url(url):
         res = requests.get(css)
         css_string += (reduce_css(res.text)) + "\n"
 
-    css_blocks = truncate_css_blocks(css_string=css_string, max_tokens=3600)
+    css_blocks = truncate_css_blocks(css_string=css_string, max_tokens=4000)
     dicts_to_merge = extract_meaningful_css_blocks(css_blocks)
 
     return merge_dict(dicts_to_merge=dicts_to_merge)
@@ -225,12 +243,17 @@ def fetch_colors_from_url(url):
 
 def display_colors(color_name, color_codes):
     st.write(f"{color_name}:")
-    for color_code in color_codes:
-        st.markdown(
-            f"<div style='display: inline-block; width: 50px; height: 50px; background: {color_code};'></div>"
-            f"<div style='display: inline-block; margin-left: 10px;'>{color_code}</div>",
-            unsafe_allow_html=True,
-        )
+
+    # Create 4 columns
+    col1, col2, col3, col4 = st.columns(4)
+
+    for i, color_code in enumerate(color_codes):
+        with [col1, col2, col3, col4][i % 4]:
+            st.markdown(
+                f"<div style='width: 50px; height: 50px; background: {color_code};'></div>"
+                f"<div style='margin-left: 10px;'>{color_code}</div>",
+                unsafe_allow_html=True,
+            )
 
 
 st.set_page_config(page_title="Template Wizard", page_icon=":art:")
@@ -253,13 +276,21 @@ col2.markdown(
 process_button = col2.button("Process")
 
 
-if process_button or url:
+if process_button or is_valid_url(url):
     with st.spinner("Processing..."):
         colors = fetch_colors_from_url(url)
-        print(colors)
+        print("colors : ", colors)
 
         if colors:
             for color_name, color_codes in colors.items():
-                display_colors(color_name, color_codes)
+                if "color" in color_name:
+                    display_colors(color_name, color_codes)
+
+            st.write("Primary font:")
+            st.write(colors.get("primary_font", ["Not available"])[0])
+
+            st.write("Secondary font:")
+            st.write(colors.get("secondary_font", ["Not available"])[0])
+
         else:
             st.write("Couldn't fetch the colors. Make sure the URL is correct.")
