@@ -238,7 +238,7 @@ st.set_page_config(page_title="Template Wizard", page_icon=":art:")
 st.title("Template Wizard")
 
 col1, col2 = st.columns([2, 1])
-url = col1.text_input("URL: ", "")
+url = col1.text_input("URL: ")
 col2.markdown(
     """
     <style>
