@@ -6,12 +6,15 @@ from litellm import completion
 from trafilatura import extract
 from trafilatura.settings import use_config
 
+from get_design_from_source import count_tokens, truncate_to_max_tokens
+
 trafilatura_config = use_config()
 trafilatura_config.set("DEFAULT", "EXTRACTION_TIMEOUT", "0")
 
 
-scrape_it_api_key = os.environ.get("SCRAPE_IT_API_KEY")
 MODEL_NAME = os.environ.get("MODEL_NAME")
+MAX_TOKENS = int(os.environ.get("MODEL_MAX_TOKENS"))
+scrape_it_api_key = os.environ.get("SCRAPE_IT_API_KEY")
 SCRAPING_SERVICE_TIMEOUT = 30
 SCRAPE_IT_API_URL = "https://api.scrape-it.cloud/scrape"
 
@@ -44,7 +47,10 @@ def extract_text_from_url_scrape_it(url):
 
 def apply_writing_style(original_content, url):
     text = extract_text_from_url_scrape_it(url)
-    print(MODEL_NAME)
+    input_template_tokens = count_tokens(original_content)
+    text = truncate_to_max_tokens(
+        text, max_tokens=MAX_TOKENS - 2 * input_template_tokens - 100
+    )
     prompt = f"""Read the above email and rewrite it in this writing style:
     Rules:
     - Only return the output email, no extra explanations

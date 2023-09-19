@@ -74,7 +74,10 @@ At the end of my session, I opened up the room for questions. A young lady in th
 email_to_rewrite = st.text_area(
     "Email to Rewrite:", email_to_rewrite_placeholder, height=300
 )
-url_for_writing_style = st.text_input("Your article URL")
+url_for_writing_style = st.text_input(
+    "Your article URL",
+    "https://raw.githubusercontent.com/cocoxu/Shakespeare/master/RomeoJuliet/dev.romeojuliet_modern.1.snt.aligned",
+)
 
 rewrite_button = st.button("Apply writing style")
 
