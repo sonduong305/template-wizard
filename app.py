@@ -11,14 +11,14 @@ logger = logging.getLogger(__name__)
 
 
 def display_colors(color_name, color_codes):
-    st.write(f"{color_name}:")
+    st.write(f"**{color_name}:**")
 
     col1, col2, col3, col4 = st.columns(4)
 
     for i, color_code in enumerate(color_codes):
         with [col1, col2, col3, col4][i % 4]:
             st.markdown(
-                f"<div style='width: 50px; height: 50px; background: {color_code};'></div>"
+                f"<div style='width: 70px; height: 70px; background: {color_code};'></div>"
                 f"<div style='margin-left: 10px;'>{color_code}</div>",
                 unsafe_allow_html=True,
             )
@@ -56,10 +56,10 @@ if process_button or is_valid_url(url):
                 if "color" in color_name:
                     display_colors(color_name, color_codes)
 
-            st.write("Primary font:")
+            st.write("**Primary font:**")
             st.write(colors.get("primary_font", ["Not available"])[0])
 
-            st.write("Secondary font:")
+            st.write("**Secondary font:**")
             st.write(colors.get("secondary_font", ["Not available"])[0])
 
         else:
