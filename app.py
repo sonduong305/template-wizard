@@ -1,250 +1,18 @@
-import ast
-import json
 import logging
-from urllib.parse import urljoin, urlparse
 
-import cssutils
-import requests
 import streamlit as st
-import tiktoken
-from bs4 import BeautifulSoup
 from dotenv import load_dotenv
-from litellm import completion
 
-cssutils.log.setLevel(logging.CRITICAL)
+from apply_writing_style import apply_writing_style
+from get_design_from_source import fetch_colors_from_url, is_valid_url
 
 load_dotenv()
-MODEL_NAME = "gpt-3.5-turbo"
-
-
-def is_valid_url(url):
-    try:
-        result = urlparse(url)
-        return all([result.scheme, result.netloc])
-    except ValueError:
-        return False
-
-
-def select_meaningful_css_files(files):
-    prompt = "Above are css files of a website, return what should be the main style sheet, not any lib ones. Return in the list of css file urls in list format without any additional information"
-
-    response = completion(
-        messages=[
-            {"role": "user", "content": str(files)},
-            {"role": "user", "content": prompt},
-        ],
-        model=MODEL_NAME,
-    )
-    if not response["choices"][0]["message"]["content"].startswith("["):
-        return []
-    css_files = ast.literal_eval(response["choices"][0]["message"]["content"])
-    valid_files = []
-    for file in css_files:
-        if is_valid_url(file):
-            valid_files.append(file)
-    return valid_files
-
-
-def extract_meaningful_css_blocks(all_blocks):
-    meaningful_block = []
-    for blocks in all_blocks:
-        prompt = "What is the primary color, secondary color, background color in the whole website, given a part of the css blocks, answer in the form of json with keys: primary_color, secondary_color, background_color, text_color, link_color, primary_font, secondary_font with values being a hex code. If you find it's not in the given blocks, only return the found ones"
-
-        response = completion(
-            messages=[
-                {"role": "user", "content": reduce_css(blocks)},
-                {"role": "user", "content": prompt},
-            ],
-            model=MODEL_NAME,
-        )
-        try:
-            res = response["choices"][0]["message"]["content"]
-            meaningful_block.append(json.loads(res))
-        except Exception:
-            pass
-    return meaningful_block
-
-
-def reduce_css(css_string):
-    parser = cssutils.CSSParser()
-    parsed = parser.parseString(css_string)
-    minimized_css = ""
-
-    for rule in parsed:
-        if rule.type == rule.STYLE_RULE:
-            minimized_css += rule.selectorText + "{" + rule.style.cssText + "}"
-
-    return minimized_css
-
-
-def count_tokens(text):
-    encoding = tiktoken.encoding_for_model(MODEL_NAME)
-    return sum(1 for _ in encoding.encode(text))
-
-
-def filter_color_related_properties(css_string):
-    css_parser = cssutils.CSSParser()
-    css = css_parser.parseString(css_string)
-
-    # List of properties related to colors
-    color_properties = [
-        "background-color",
-        "background",
-        "border",
-        "border-bottom-color",
-        "border-color",
-        "border-left-color",
-        "border-right-color",
-        "border-top-color",
-        "box-shadow",
-        "caret-color",
-        "color",
-        "column-rule",
-        "column-rule-color",
-        "filter",
-        "opacity",
-        "outline-color",
-        "outline",
-        "text-decoration",
-        "text-decoration-color",
-        "text-shadow",
-        "font",
-        "font-family",
-        "font-weight",
-    ]
-
-    filtered_blocks = []
-
-    for rule in css:
-        if rule.type == rule.STYLE_RULE:
-            style = rule.style
-            color_related_style = {}
-
-            for prop in color_properties:
-                if style.getPropertyValue(prop):
-                    color_related_style[prop] = style.getPropertyValue(prop)
-
-            if color_related_style:
-                # Construct the CSS block with only color-related properties
-                style_string = " ".join(
-                    [f"{k}: {v};" for k, v in color_related_style.items()]
-                )
-                color_block = f"{rule.selectorText} {{ {style_string} }}"
-                filtered_blocks.append(color_block)
-
-    return filtered_blocks
-
-
-def parse_css(css_string):
-    css_parser = cssutils.CSSParser()
-    css = css_parser.parseString(css_string)
-    original_blocks = []
-
-    for rule in css:
-        if rule.type == rule.STYLE_RULE:
-            original_block = "{} {{{}}}".format(rule.selectorText, rule.style.cssText)
-            original_blocks.append(original_block)
-        elif rule.type == rule.MEDIA_RULE:
-            media_rules = []
-            for sub_rule in rule.cssRules:
-                if sub_rule.type == sub_rule.STYLE_RULE:
-                    media_rules.append(
-                        "{} {{{}}}".format(
-                            sub_rule.selectorText, sub_rule.style.cssText
-                        )
-                    )
-            original_blocks.extend(media_rules)
-
-    return original_blocks
-
-
-def truncate_css_blocks(css_string, max_tokens):
-    original_blocks = filter_color_related_properties(css_string)
-    truncated_blocks = []
-    current_block = ""
-    current_tokens = 0
-
-    for block in original_blocks:
-        block_tokens = count_tokens(block)
-
-        if current_tokens + block_tokens <= max_tokens:
-            if current_block:
-                current_block += "\n" + block
-            else:
-                current_block = block
-            current_tokens += block_tokens
-        else:
-            if current_block:
-                truncated_blocks.append(current_block)
-            current_block = block
-            current_tokens = block_tokens
-
-        if current_tokens >= max_tokens:
-            truncated_blocks.append(current_block)
-            current_block = ""
-            current_tokens = 0
-
-    if current_block:
-        truncated_blocks.append(current_block)
-
-    return truncated_blocks
-
-
-def merge_dict(dicts_to_merge):
-    merged_dict = {}
-
-    for d in dicts_to_merge:
-        for key, value in d.items():
-            if value is None:
-                continue
-
-            if key in merged_dict:
-                merged_dict[key].add(value.lower())
-            else:
-                merged_dict[key] = {value}
-
-    for key in merged_dict:
-        merged_dict[key] = list(merged_dict[key])
-    return merged_dict
-
-
-def fetch_colors_from_url(url):
-    response = requests.get(url)
-    css_string = ""
-
-    if response.status_code == 200:
-        soup = BeautifulSoup(response.text, "html.parser")
-        # Extract and append CSS from <style> tags
-        for style_tag in soup.find_all("style"):
-            css_string += style_tag.string + "\n" if style_tag.string else ""
-
-        css_links = []
-        parsed_url = urlparse(url)
-        for link in soup.find_all("link", rel="stylesheet"):
-            href = link.get("href")
-            if href:
-                full_url = urljoin(url, href)
-                parsed_full_url = urlparse(full_url)
-                if parsed_full_url.netloc == parsed_url.netloc:
-                    css_links.append(full_url)
-
-    else:
-        print(f"Failed to retrieve the webpage. Status code: {response.status_code}")
-        return
-    for css in select_meaningful_css_files(css_links):
-        res = requests.get(css)
-        css_string += (reduce_css(res.text)) + "\n"
-
-    css_blocks = truncate_css_blocks(css_string=css_string, max_tokens=4000)
-    dicts_to_merge = extract_meaningful_css_blocks(css_blocks)
-
-    return merge_dict(dicts_to_merge=dicts_to_merge)
+logger = logging.getLogger(__name__)
 
 
 def display_colors(color_name, color_codes):
     st.write(f"{color_name}:")
 
-    # Create 4 columns
     col1, col2, col3, col4 = st.columns(4)
 
     for i, color_code in enumerate(color_codes):
@@ -259,6 +27,8 @@ def display_colors(color_name, color_codes):
 st.set_page_config(page_title="Template Wizard", page_icon=":art:")
 
 st.title("Template Wizard")
+st.header("Section 1: Design Analysis")
+
 
 col1, col2 = st.columns([2, 1])
 url = col1.text_input("URL: ")
@@ -273,7 +43,7 @@ col2.markdown(
     """,
     unsafe_allow_html=True,
 )
-process_button = col2.button("Process")
+process_button = col2.button("Analyze design")
 
 
 if process_button or is_valid_url(url):
@@ -294,3 +64,24 @@ if process_button or is_valid_url(url):
 
         else:
             st.write("Couldn't fetch the colors. Make sure the URL is correct.")
+
+
+st.header("Section 2: Applying Writing Style")
+email_to_rewrite_placeholder = """THE MOMENT MY CLIENTS DISCOVER THEIR TRUE POTENTIAL - THAT'S WHAT DRIVES ME
+I recently spoke at the Modern Entrepreneur conference. The weeks leading up to the event were filled with preparation. I crafted the perfect presentation and memorized every word of my keynote. I was ready, or, so thought...
+
+At the end of my session, I opened up the room for questions. A young lady in the front row stood up and asked "what inspires you?". Three words and such a simple question, right? I felt a rush of nerves run through me as scrambled to piece together an answer. The truth is, I've never asked myself this before. And in that moment I unveiled a disconnect between my passion and my pursuit. What fuels me to show up and help fellow business owners? put a kabosh on the rest of my plans for the week. No to-do list, no phone apps, all alarms off, and deadlines on the backburner. I dug deep, asking myself the tough questions. I realized it's not the paychecks, shiny reviews, or social media following that pulls me toward this path. The moment my clients discover their true potential-that's what drives me."""
+email_to_rewrite = st.text_area(
+    "Email to Rewrite:", email_to_rewrite_placeholder, height=300
+)
+url_for_writing_style = st.text_input("Your article URL")
+
+rewrite_button = st.button("Apply writing style")
+
+if rewrite_button and email_to_rewrite:
+    with st.spinner("Processing..."):
+        rewritten_email = apply_writing_style(email_to_rewrite, url_for_writing_style)
+        st.write("Rewritten Email Template:")
+        st.write(rewritten_email)
+elif rewrite_button:
+    st.write("Please enter an email to rewrite.")
