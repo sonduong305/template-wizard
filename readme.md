@@ -2,6 +2,7 @@
 
 Template-wizard is a web application built with Streamlit that uses AI to analyze user-provided website URLs and suggest email templates based on the website's design and writing style. This README explains how to run the application using Docker.
 
+You can check the live version at [https://template-wizard.bysonduong.com/](https://template-wizard.bysonduong.com/)
 ## Getting Started
 
 1. Clone the repository:
